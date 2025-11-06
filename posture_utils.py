@@ -4,13 +4,11 @@ import numpy as np
 
 mp_pose = mp.solutions.pose
 
-def calculate_angle(a, b, c):
-    """Calculates the angle a-b-c.
-    Works for 2D and 3D points.
-    """
-    a = np.array(a)  # First
-    b = np.array(b)  # Mid
-    c = np.array(c)  # End
+def calculate_3d_angle(a, b, c):
+    """Calculates the 3D angle a-b-c."""
+    a = np.array(a, dtype=np.float64)
+    b = np.array(b, dtype=np.float64)
+    c = np.array(c, dtype=np.float64)
     
     ba = a - b
     bc = c - b
@@ -27,73 +25,68 @@ def calculate_angle(a, b, c):
 
 def get_pose_landmarks(results, w, h):
     """
-    Extracts key landmarks and calculates midpoints.
-    Returns a dictionary of 2D points and a visibility flag.
+    Extracts key landmarks (hip, shoulder, ear) for the most visible side.
     """
-    landmarks_3d = results.pose_landmarks.landmark
-    landmarks_2d = {}
-    visible = True
-
-    # Get key 3D landmarks
-    left_shoulder_3d = landmarks_3d[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
-    right_shoulder_3d = landmarks_3d[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
-    left_hip_3d = landmarks_3d[mp_pose.PoseLandmark.LEFT_HIP.value]
-    right_hip_3d = landmarks_3d[mp_pose.PoseLandmark.RIGHT_HIP.value]
-    left_ear_3d = landmarks_3d[mp_pose.PoseLandmark.LEFT_EAR.value]
-    right_ear_3d = landmarks_3d[mp_pose.PoseLandmark.RIGHT_EAR.value]
-
-    # Check visibility
-    key_landmarks_visible = (
-        left_shoulder_3d.visibility > 0.5 and right_shoulder_3d.visibility > 0.5 and
-        left_hip_3d.visibility > 0.5 and right_hip_3d.visibility > 0.5 and
-        left_ear_3d.visibility > 0.5 and right_ear_3d.visibility > 0.5
-    )
+    landmarks_3d_dict = {}
+    landmarks_2d_dict = {}
     
-    if not key_landmarks_visible:
-        return None, False
-
-    # --- Calculate Midpoints in 2D (for angle calculation) ---
-    # We use 2D points for screen-relative angles
-    shoulder_mid_x = (left_shoulder_3d.x + right_shoulder_3d.x) / 2
-    shoulder_mid_y = (left_shoulder_3d.y + right_shoulder_3d.y) / 2
-
-    hip_mid_x = (left_hip_3d.x + right_hip_3d.x) / 2
-    hip_mid_y = (left_hip_3d.y + right_hip_3d.y) / 2
-
-    ear_mid_x = (left_ear_3d.x + right_ear_3d.x) / 2
-    ear_mid_y = (left_ear_3d.y + right_ear_3d.y) / 2
-
-    # Store 2D points (normalized 0.0-1.0)
-    landmarks_2d['shoulder_mid'] = [shoulder_mid_x, shoulder_mid_y]
-    landmarks_2d['hip_mid'] = [hip_mid_x, hip_mid_y]
-    landmarks_2d['ear_mid'] = [ear_mid_x, ear_mid_y]
-
-    # --- Store pixel coordinates for drawing ---
-    landmarks_2d['shoulder_mid_px'] = (int(shoulder_mid_x * w), int(shoulder_mid_y * h))
-    landmarks_2d['hip_mid_px'] = (int(hip_mid_x * w), int(hip_mid_y * h))
-    landmarks_2d['ear_mid_px'] = (int(ear_mid_x * w), int(ear_mid_y * h))
+    lm = results.pose_landmarks.landmark
     
-    return landmarks_2d, True
+    use_left_side = lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value].visibility > \
+                    lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].visibility
+    
+    if use_left_side:
+        shoulder = lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+        hip = lm[mp_pose.PoseLandmark.LEFT_HIP.value]
+        ear = lm[mp_pose.PoseLandmark.LEFT_EAR.value]
+    else:
+        shoulder = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+        hip = lm[mp_pose.PoseLandmark.RIGHT_HIP.value]
+        ear = lm[mp_pose.PoseLandmark.RIGHT_EAR.value]
+
+    visible = (shoulder.visibility > 0.5 and 
+               hip.visibility > 0.5 and 
+               ear.visibility > 0.5)
+
+    if not visible:
+        return None, None, False
+
+    # --- Store 3D coordinates (x, y, z) for angle calculation ---
+    landmarks_3d_dict['shoulder'] = [shoulder.x, shoulder.y, shoulder.z]
+    landmarks_3d_dict['hip'] = [hip.x, hip.y, hip.z]
+    landmarks_3d_dict['ear'] = [ear.x, ear.y, ear.z]
+
+    # --- Store 2D pixel coordinates for drawing ---
+    landmarks_2d_dict['shoulder_px'] = (int(shoulder.x * w), int(shoulder.y * h))
+    landmarks_2d_dict['hip_px'] = (int(hip.x * w), int(hip.y * h))
+    landmarks_2d_dict['ear_px'] = (int(ear.x * w), int(ear.y * h))
+    
+    return landmarks_3d_dict, landmarks_2d_dict, True
 
 
-def calculate_angles(landmarks_2d):
+def calculate_angles(landmarks_3d):
     """
-    Calculates the new torso and neck angles.
+    Calculates all three key posture angles.
     """
-    hip_mid = landmarks_2d['hip_mid']
-    shoulder_mid = landmarks_2d['shoulder_mid']
-    ear_mid = landmarks_2d['ear_mid']
+    hip = landmarks_3d['hip']
+    shoulder = landmarks_3d['shoulder']
+    ear = landmarks_3d['ear']
 
-    # --- Torso Angle ---
-    # Angle of the torso line relative to the vertical.
-    # We create a new point 'hip_vertical' directly below 'hip_mid'
-    hip_vertical = [hip_mid[0], hip_mid[1] + 1.0] 
-    # Angle: hip_vertical - hip_mid - shoulder_mid
-    torso_angle = calculate_angle(hip_vertical, hip_mid, shoulder_mid)
+    # --- Create Vertical "Helper" Points ---
+    hip_vertical = [hip[0], hip[1] - 1, hip[2]]
+    shoulder_vertical = [shoulder[0], shoulder[1] - 1, shoulder[2]]
+
+    # --- Angle 1: Torso Recline (Vertical_Line - Hip - Shoulder) ---
+    torso_recline_angle = calculate_3d_angle(hip_vertical, hip, shoulder)
     
-    # --- Neck Angle ---
-    # Angle of the neck line relative to the torso line.
-    # Angle: hip_mid - shoulder_mid - ear_mid
-    neck_angle = calculate_angle(hip_mid, shoulder_mid, ear_mid)
+    # --- Angle 2: Neck Protraction (Vertical_Line - Shoulder - Ear) ---
+    neck_protraction_angle = calculate_3d_angle(shoulder_vertical, shoulder, ear)
+    
+    # --- Angle 3: Back Curve (Hip - Shoulder - Ear) ---
+    back_curve_angle = calculate_3d_angle(hip, shoulder, ear)
 
-    return {"torso": torso_angle, "neck": neck_angle}
+    return {
+        "torso_recline": torso_recline_angle,
+        "neck_protraction": neck_protraction_angle,
+        "back_curve": back_curve_angle
+    }
