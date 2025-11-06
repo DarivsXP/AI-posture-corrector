@@ -1,87 +1,109 @@
 # calibrate_posture.py
-
 import cv2
 import mediapipe as mp
 import numpy as np
 import json
 import time
+import os
 
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
-def calculate_angle(a, b, c):
-    a, b, c = np.array(a), np.array(b), np.array(c)
-    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-    angle = np.abs(radians * 180.0 / np.pi)
-    if angle > 180.0:
-        angle = 360 - angle
-    return angle
+N_CAPTURE = 120  # number of valid frames to average for baseline
 
-def get_keypoints(results, landmark_list):
-    landmarks = results.pose_landmarks.landmark
-    return [(landmarks[i].x, landmarks[i].y) for i in landmark_list]
+def calculate_3d_angle(a, b, c):
+    """3D angle between points a-b-c in degrees."""
+    a = np.array(a, dtype=np.float64)
+    b = np.array(b, dtype=np.float64)
+    c = np.array(c, dtype=np.float64)
+    ba = a - b
+    bc = c - b
+    denom = (np.linalg.norm(ba) * np.linalg.norm(bc))
+    if denom == 0:
+        return 0.0
+    cosine_angle = np.dot(ba, bc) / denom
+    cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+    angle = np.degrees(np.arccos(cosine_angle))
+    return float(angle)
 
-def main():
-    cap = cv2.VideoCapture(0)
-    print("\n🪑 Sit straight in your best posture. Calibration starts in 5 seconds...")
+def run_calibration(save_path="posture_baseline.json"):
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print("Camera not detected. Check the webcam and try again.")
+        return
+
+    print("Position camera at ~30-45° angle, chest/shoulder height.")
+    print("Sit straight in your best posture. Calibration starts in 5 seconds...")
     time.sleep(5)
-    print("📷 Capturing posture baseline...")
+    print("Calibration started. Hold still. Press ESC to abort.")
 
-    angle_data = {"neck": [], "back": [], "shoulder_alignment": []}
-
-    with mp_pose.Pose(min_detection_confidence=0.7, min_tracking_confidence=0.7) as pose:
-        frame_count = 0
-        while frame_count < 100:
+    angles = {"neck": [], "upper_back": []}
+    with mp_pose.Pose(static_image_mode=False,
+                      model_complexity=1,
+                      min_detection_confidence=0.6,
+                      min_tracking_confidence=0.6) as pose:
+        valid_frames = 0
+        total_frames = 0
+        last_print = time.time()
+        while valid_frames < N_CAPTURE:
             ret, frame = cap.read()
             if not ret:
+                print("Failed to read frame from camera.")
                 break
-            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(image)
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            total_frames += 1
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(frame_rgb)
+
+            display = frame.copy()
+            mp_drawing.draw_landmarks(display, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
             if results.pose_landmarks:
-                landmarks = results.pose_landmarks.landmark
+                lm = results.pose_landmarks.landmark
+                # choose LEFT side landmarks (works for 30-45 deg)
+                nose = [lm[0].x, lm[0].y, lm[0].z]
+                left_ear = [lm[7].x, lm[7].y, lm[7].z]
+                left_shoulder = [lm[11].x, lm[11].y, lm[11].z]
+                left_hip = [lm[23].x, lm[23].y, lm[23].z]
 
-                # key points
-                l_shoulder = [landmarks[11].x, landmarks[11].y]
-                r_shoulder = [landmarks[12].x, landmarks[12].y]
-                l_hip = [landmarks[23].x, landmarks[23].y]
-                r_hip = [landmarks[24].x, landmarks[24].y]
-                l_ear = [landmarks[7].x, landmarks[7].y]
-                r_ear = [landmarks[8].x, landmarks[8].y]
+                neck_angle = calculate_3d_angle(left_shoulder, left_ear, nose)      # shoulder - ear - nose
+                upper_back_angle = calculate_3d_angle(left_hip, left_shoulder, left_ear)  # hip - shoulder - ear
 
-                mid_shoulder = [(l_shoulder[0]+r_shoulder[0])/2, (l_shoulder[1]+r_shoulder[1])/2]
-                mid_hip = [(l_hip[0]+r_hip[0])/2, (l_hip[1]+r_hip[1])/2]
-                mid_ear = [(l_ear[0]+r_ear[0])/2, (l_ear[1]+r_ear[1])/2]
+                # Collect only plausible angles (filter out zeros / bad detection)
+                if 10 < neck_angle < 200 and 10 < upper_back_angle < 200:
+                    angles["neck"].append(neck_angle)
+                    angles["upper_back"].append(upper_back_angle)
+                    valid_frames += 1
 
-                # compute angles
-                neck_angle = calculate_angle(mid_ear, mid_shoulder, mid_hip)
-                back_angle = calculate_angle(mid_shoulder, mid_hip, [mid_hip[0], mid_hip[1]+0.1])
-                shoulder_alignment = np.abs(l_shoulder[1] - r_shoulder[1]) * 100
+            # overlay status
+            cv2.putText(display, f"Valid frames: {valid_frames}/{N_CAPTURE}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 0), 2)
+            cv2.putText(display, "Calibration (press ESC to cancel)", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
-                angle_data["neck"].append(neck_angle)
-                angle_data["back"].append(back_angle)
-                angle_data["shoulder_alignment"].append(shoulder_alignment)
-
-                frame_count += 1
-
-                mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-                cv2.putText(image, f"Capturing... {frame_count}/100", (20, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.imshow("Calibration", image)
-
-            if cv2.waitKey(10) & 0xFF == 27:
+            cv2.imshow("Calibration", display)
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:
+                print("Calibration aborted by user.")
                 break
 
-    cap.release()
-    cv2.destroyAllWindows()
+            # occasional console update
+            if time.time() - last_print > 2:
+                print(f"Collected {valid_frames}/{N_CAPTURE} valid frames...")
+                last_print = time.time()
 
-    baseline = {k: np.mean(v) for k, v in angle_data.items()}
-    with open("posture_baseline.json", "w") as f:
-        json.dump(baseline, f, indent=4)
+        cap.release()
+        cv2.destroyAllWindows()
 
-    print("\n✅ Calibration complete! Baseline saved to posture_baseline.json")
-    print("Baseline angles:", baseline)
+    if len(angles["neck"]) < 20:
+        print("Not enough valid frames collected. Try again with clearer view and lighting.")
+        return
+
+    baseline = {k: float(np.mean(v)) for k, v in angles.items()}
+    with open(save_path, "w") as f:
+        json.dump(baseline, f, indent=2)
+
+    print("Calibration complete. Baseline saved to:", os.path.abspath(save_path))
+    print("Baseline:", baseline)
 
 if __name__ == "__main__":
-    main()
+    run_calibration()
