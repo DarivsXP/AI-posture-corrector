@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PostureChunkController;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -14,9 +15,13 @@ Route::get('/', function () {
     ]);
 });
 
-Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+// Route::get('/dashboard', function () {
+//     return Inertia::render('Dashboard');
+// })->middleware(['auth', 'verified'])->name('dashboard');
+
+Route::get('/dashboard', [PostureChunkController::class, 'index'])
+    ->middleware(['auth', 'verified'])
+    ->name('dashboard');
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
@@ -27,5 +32,11 @@ Route::middleware('auth')->group(function () {
 Route::get('/posture-app', function () {
     return Inertia::render('PostureApp');
 })->middleware(['auth', 'verified']);
+
+Route::get('/camera', function () {
+    return Inertia::render('PostureCamera');
+})->middleware(['auth', 'verified']);
+
+// Route::post('/posture-chunks', [PostureChunkController::class, 'store'])->name('chunks.store');
 
 require __DIR__.'/auth.php';

@@ -6,11 +6,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\PostureChunk;
 
+
 class User extends Authenticatable
 {
+
+    /** @use HasFactory<\Database\Factories\UserFactory> */
+    // 2. ADD 'HasApiTokens' TO THIS LIST
+    use HasApiTokens, HasFactory, Notifiable;
+
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
@@ -48,7 +55,7 @@ class User extends Authenticatable
         ];
     }
 
-    public function postureChunks(): HasMany    
+    public function postureChunks(): HasMany
     {
         return $this->hasMany(PostureChunk::class);
     }

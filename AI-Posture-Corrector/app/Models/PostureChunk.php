@@ -10,7 +10,19 @@ class PostureChunk extends Model
 {
     use HasFactory;
 
-    // Add this function:
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array
+     */
+    protected $fillable = [
+        'score',
+        'slouch_duration',
+        'alert_count',
+        // 'user_id' is handled by the relationship,
+        // so we don't need to add it here.
+    ];
+
     /**
      * Get the user that owns the posture chunk.
      */
